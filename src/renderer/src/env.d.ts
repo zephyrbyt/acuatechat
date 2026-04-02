@@ -144,8 +144,11 @@ interface Window {
     onPeerProfile: (callback: (data: { contactId: string; username: string; avatar: string | null }) => void) => () => void
     onTorStatusChange: (callback: (data: TorStatusData) => void) => () => void
     onAppReady: (callback: () => void) => () => void
-    getSettings: () => Promise<{ messageRetentionDays: number | null; mediaRetentionDays: number | null; desktopNotifications: boolean; twemoji: boolean; requireApproval: boolean }>
-    saveSettings: (settings: { messageRetentionDays: number | null; mediaRetentionDays: number | null; desktopNotifications: boolean; twemoji: boolean; requireApproval: boolean }) => Promise<void>
+    getSettings: () => Promise<{ messageRetentionDays: number | null; mediaRetentionDays: number | null; desktopNotifications: boolean; twemoji: boolean; requireApproval: boolean; embedsEnabled: boolean; embedAllowDomains: string[]; embedBlockDomains: string[] }>
+    saveSettings: (settings: { messageRetentionDays: number | null; mediaRetentionDays: number | null; desktopNotifications: boolean; twemoji: boolean; requireApproval: boolean; embedsEnabled: boolean; embedAllowDomains: string[]; embedBlockDomains: string[] }) => Promise<void>
+    fetchEmbed: (url: string) => Promise<{ title?: string; description?: string; image?: string; siteName?: string; favicon?: string } | null>
+    embedCacheGet: (url: string) => Promise<{ title?: string; description?: string; image?: string; siteName?: string; favicon?: string } | null>
+    embedCacheSet: (url: string, data: { title?: string; description?: string; image?: string; siteName?: string; favicon?: string }) => Promise<void>
     windowMinimize: () => void
     windowMaximize: () => void
     windowClose: () => void

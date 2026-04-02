@@ -49,6 +49,9 @@ export interface StorageSettings {
   twemoji: boolean                     // default true
   blockedPublicKeys: string[]          // public keys the user has blocked
   requireApproval: boolean             // default false
+  embedsEnabled: boolean               // default true
+  embedAllowDomains: string[]          // extra domains to auto-load (beyond built-ins)
+  embedBlockDomains: string[]          // domains to never embed
 }
 
 export interface PendingContact {
@@ -75,6 +78,7 @@ export interface Group {
   members: GroupMember[]  // all members including self
   myContactId: string     // which contactId represents "me" in this group (empty string = creator)
   createdAt: number
+  groupKey?: string       // base64 nacl.secretbox key — encrypts group message content
 }
 
 export interface GroupMessage {
@@ -114,6 +118,10 @@ export class Storage {
 
   setStorageKey(key: Uint8Array): void {
     this.storageKey = key
+  }
+
+  getStorageKey(): Uint8Array | null {
+    return this.storageKey
   }
 
   // --- Raw encrypted file I/O (for small single-record files) ---
@@ -333,6 +341,9 @@ export class Storage {
       twemoji: saved.twemoji ?? true,
       blockedPublicKeys: saved.blockedPublicKeys ?? [],
       requireApproval: saved.requireApproval ?? false,
+      embedsEnabled: saved.embedsEnabled ?? true,
+      embedAllowDomains: saved.embedAllowDomains ?? [],
+      embedBlockDomains: saved.embedBlockDomains ?? [],
     }
   }
 
@@ -356,6 +367,31 @@ export class Storage {
 
   saveSettings(settings: StorageSettings): void {
     this.writeEncrypted(path.join(this.userDataPath, 'settings.enc'), settings)
+  }
+
+  // --- Embed metadata cache ---
+
+  getEmbedCacheEntry(url: string): { title?: string; description?: string; image?: string; siteName?: string; favicon?: string } | null {
+    const cache = this.readEncrypted<Record<string, object>>(
+      path.join(this.userDataPath, 'embed-cache.enc')
+    ) ?? {}
+    const entry = cache[url] as ({ title?: string; description?: string; image?: string; siteName?: string; favicon?: string; cachedAt?: number }) | undefined
+    if (!entry) return null
+    // Expire after 7 days
+    if (entry.cachedAt && Date.now() - entry.cachedAt > 7 * 86400000) return null
+    return entry
+  }
+
+  setEmbedCacheEntry(url: string, data: { title?: string; description?: string; image?: string; siteName?: string; favicon?: string }): void {
+    const cachePath = path.join(this.userDataPath, 'embed-cache.enc')
+    const cache = (this.readEncrypted<Record<string, object>>(cachePath) ?? {}) as Record<string, object & { cachedAt?: number }>
+    cache[url] = { ...data, cachedAt: Date.now() }
+    const keys = Object.keys(cache)
+    if (keys.length > 1000) {
+      keys.sort((a, b) => ((cache[a] as any).cachedAt ?? 0) - ((cache[b] as any).cachedAt ?? 0))
+      for (const k of keys.slice(0, keys.length - 1000)) delete cache[k]
+    }
+    this.writeEncrypted(cachePath, cache)
   }
 
   // --- Retention pruning ---

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, Menu, Notification, nativeImage } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, Menu, Notification, nativeImage, session } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import * as path from 'path'
 import * as fs from 'fs'
@@ -11,6 +11,11 @@ import {
   buildInviteCode,
   parseInviteCode,
   deriveStorageKey,
+  encryptData,
+  decryptData,
+  generateGroupKey,
+  encryptGroupPayload,
+  decryptGroupPayload,
   lockIdentity,
   unlockIdentity,
   generateRecoveryPhrase,
@@ -86,7 +91,8 @@ function createWindow(): void {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true,
+      webviewTag: true,
     },
     show: false
   })
@@ -177,9 +183,18 @@ async function initializeApp(userDataPath: string, secretKey: string, publicKey:
     return match ? match.id : null
   })
 
-  // Provide group message backlog for sync requests from peers
+  // Provide group message backlog for sync requests from peers (content encrypted for wire)
   p2pServer.setGroupSyncProvider((groupId: string, since: number) => {
-    return storage!.getGroupMessages(groupId).filter(m => m.timestamp > since)
+    const groups = storage!.getGroups()
+    const groupKey = groups[groupId]?.groupKey
+    return storage!.getGroupMessages(groupId).filter(m => m.timestamp > since).map(m => {
+      if (m.direction === 'system' || !groupKey) return m
+      const encContent = encryptGroupPayload(m.content, groupKey)
+      const encAttachment = m.attachment
+        ? { ...m.attachment, data: encryptGroupPayload(m.attachment.data, groupKey) }
+        : m.attachment
+      return { ...m, content: encContent, attachment: encAttachment }
+    })
   })
 
   // Provide our own onion address + port so peers can save us as a contact
@@ -384,9 +399,9 @@ async function initializeApp(userDataPath: string, secretKey: string, publicKey:
   })
 
   p2pServer.on('group:message', ({
-    fromContactId, groupId, id, senderId, senderNickname, content, attachment, timestamp
+    groupId, id, senderId, senderNickname, content, attachment, timestamp
   }: {
-    fromContactId: string; groupId: string; id: string; senderId: string
+    fromContactId?: string; groupId: string; id: string; senderId: string
     senderNickname: string; content: string
     attachment?: { type: string; name: string; data: string }; timestamp: number
   }) => {
@@ -397,10 +412,17 @@ async function initializeApp(userDataPath: string, secretKey: string, publicKey:
     // Dedup — may arrive from multiple peers
     if (storage!.groupMessageExists(groupId, id)) return
 
-    let text = content
-    let attach: { type: string; name: string; data: string } | undefined = attachment
+    // Decrypt content and attachment data using the group key
+    const groupKey = groups[groupId].groupKey
+    const decryptedContent = groupKey ? (decryptGroupPayload(content, groupKey) ?? content) : content
+    const decryptedAttachment = (attachment && groupKey)
+      ? { ...attachment, data: decryptGroupPayload(attachment.data, groupKey) ?? attachment.data }
+      : attachment
+
+    let text = decryptedContent
+    let attach: { type: string; name: string; data: string } | undefined = decryptedAttachment
     try {
-      const parsed = JSON.parse(content)
+      const parsed = JSON.parse(decryptedContent)
       if (parsed && typeof parsed === 'object' && parsed.attachment) {
         text = parsed.text ?? ''
         attach = parsed.attachment
@@ -413,7 +435,7 @@ async function initializeApp(userDataPath: string, secretKey: string, publicKey:
     }
     storage!.addGroupMessage(groupId, msg)
 
-    // Fan-forward to other online group members (relay role)
+    // Fan-forward to other online group members (relay role) — forward original encrypted wire payload
     const group = groups[groupId]
     const contacts = storage!.getContacts()
     for (const member of group.members) {
@@ -422,7 +444,7 @@ async function initializeApp(userDataPath: string, secretKey: string, publicKey:
       if (contact.publicKey === senderId) continue  // don't send back to sender
       if (!p2pServer!.isConnected(contact.id)) continue
       p2pServer!.sendGroupMessage(
-        contact.id, groupId, id, senderId, senderNickname, content, timestamp, attach
+        contact.id, groupId, id, senderId, senderNickname, content, timestamp, attachment
       )
     }
 
@@ -463,18 +485,26 @@ async function initializeApp(userDataPath: string, secretKey: string, publicKey:
     const groups = storage!.getGroups()
     if (!groups[groupId]) return
 
+    const syncGroupKey = groups[groupId].groupKey
     let newCount = 0
     for (const msg of messages) {
       if (storage!.groupMessageExists(groupId, msg.id)) continue
       const isSystem = msg.direction === 'system'
-      storage!.addGroupMessage(groupId, { ...msg, direction: isSystem ? 'system' : 'received' })
+      // Decrypt wire-encrypted content from the sync response
+      const plainContent = (!isSystem && syncGroupKey)
+        ? (decryptGroupPayload(msg.content, syncGroupKey) ?? msg.content)
+        : msg.content
+      const plainAttachment = (msg.attachment && syncGroupKey && !isSystem)
+        ? { ...msg.attachment, data: decryptGroupPayload(msg.attachment.data, syncGroupKey) ?? msg.attachment.data }
+        : msg.attachment
+      storage!.addGroupMessage(groupId, { ...msg, content: plainContent, attachment: plainAttachment, direction: isSystem ? 'system' : 'received' })
       sendToRenderer('group:message', {
         groupId: msg.groupId,
         id: msg.id,
         senderId: msg.senderId,
         senderNickname: msg.senderNickname,
-        content: msg.content,
-        attachment: msg.attachment,
+        content: plainContent,
+        attachment: plainAttachment,
         timestamp: msg.timestamp,
         direction: isSystem ? 'system' : 'received',
         systemEvent: msg.systemEvent,
@@ -597,12 +627,11 @@ async function initializeApp(userDataPath: string, secretKey: string, publicKey:
       hiddenServiceKey
     )
 
-    // If we got a new hidden service key, persist it by re-locking.
-    // We can't do that here (no passphrase), so store it in a plaintext sidecar.
-    // It's a Tor service key, not the encryption key — leaking it only reveals onion address.
+    // If we got a new hidden service key, persist it encrypted with the storage key.
     if (!hiddenServiceKey && privateKey) {
       const hsKeyFile = path.join(userDataPath, 'hskey.dat')
-      fs.writeFileSync(hsKeyFile, privateKey, 'utf8')
+      const hsStorageKey = deriveStorageKey(secretKey)
+      fs.writeFileSync(hsKeyFile, encryptData(privateKey, hsStorageKey), 'utf8')
     }
 
     torStatus = { status: 'connected', onionAddress, socksPort: torController.socksPort }
@@ -700,9 +729,12 @@ ipcMain.handle('auth:setup', async (_event, passphrase: string) => {
   const portFile = path.join(userDataPath, 'localport.dat')
   const hsKeyFile = path.join(userDataPath, 'hskey.dat')
   if (fs.existsSync(portFile)) localPort = parseInt(fs.readFileSync(portFile, 'utf8'), 10) || 7867
-  if (fs.existsSync(hsKeyFile)) hiddenServiceKey = fs.readFileSync(hsKeyFile, 'utf8').trim()
 
   const kp = generateKeyPair()
+  if (fs.existsSync(hsKeyFile)) {
+    const hsStorageKey = deriveStorageKey(kp.secretKey)
+    hiddenServiceKey = decryptData(fs.readFileSync(hsKeyFile, 'utf8').trim(), hsStorageKey)
+  }
   const identityJson = JSON.stringify({
     publicKey: kp.publicKey,
     secretKey: kp.secretKey,
@@ -753,7 +785,8 @@ ipcMain.handle('auth:unlock', async (_event, passphrase: string) => {
     if (!isNaN(p)) identity.localPort = p
   }
   if (fs.existsSync(hsKeyFile) && !identity.hiddenServiceKey) {
-    identity.hiddenServiceKey = fs.readFileSync(hsKeyFile, 'utf8').trim()
+    const hsStorageKey = deriveStorageKey(identity.secretKey)
+    identity.hiddenServiceKey = decryptData(fs.readFileSync(hsKeyFile, 'utf8').trim(), hsStorageKey)
   }
 
   // Re-lock with merged data so sidecars aren't needed next time
@@ -820,8 +853,9 @@ ipcMain.handle('identity:regen-onion', async () => {
     const port = p2pServer.listeningPort
     const { onionAddress, privateKey } = await torController.createHiddenServiceForPort(port, null)
 
-    // Persist new key
-    fs.writeFileSync(hsKeyFile, privateKey, 'utf8')
+    // Persist new key encrypted with the storage key
+    const hsStorageKey = storage!.getStorageKey()!
+    fs.writeFileSync(hsKeyFile, encryptData(privateKey, hsStorageKey), 'utf8')
 
     torStatus = { status: 'connected', onionAddress, socksPort: torController.socksPort }
     sendToRenderer('tor:status-change', torStatus)
@@ -852,6 +886,9 @@ ipcMain.handle('identity:invite-code', () => {
 })
 
 ipcMain.handle('chat:connect', async (_event, inviteCode: string, nickname: string) => {
+  if (typeof inviteCode !== 'string' || inviteCode.length > 1024) return { success: false, error: 'Invalid invite code' }
+  if (typeof nickname !== 'string') return { success: false, error: 'Invalid nickname' }
+  nickname = nickname.slice(0, 64)
   try {
     const parsed = parseInviteCode(inviteCode)
     if (!parsed) return { success: false, error: 'Invalid invite code' }
@@ -910,6 +947,8 @@ ipcMain.on('chat:typing', (_event, contactId: string, typing: boolean) => {
 })
 
 ipcMain.handle('chat:send', (_event, contactId: string, content: string) => {
+  if (typeof contactId !== 'string' || contactId.length > 128) return { success: false, error: 'Invalid contact' }
+  if (typeof content !== 'string' || content.length > 65536) return { success: false, error: 'Message too long' }
   if (!p2pServer || !storage) return { success: false, error: 'Server not initialized' }
 
   const id = uuidv4()
@@ -931,9 +970,10 @@ ipcMain.handle('chat:send', (_event, contactId: string, content: string) => {
   if (p2pServer.isConnected(contactId)) {
     p2pServer.sendMessage(contactId, content, id, timestamp)
   } else {
-    // Queue for delivery when peer comes online
+    // Queue for delivery when peer comes online (cap at 500 per contact)
     if (!offlineQueue.has(contactId)) offlineQueue.set(contactId, [])
-    offlineQueue.get(contactId)!.push({ id, content, timestamp })
+    const q = offlineQueue.get(contactId)!
+    if (q.length < 500) q.push({ id, content, timestamp })
   }
 
   return { success: true, id, timestamp }
@@ -976,6 +1016,9 @@ ipcMain.handle('contacts:blocked', () => {
 
 ipcMain.handle('profile:get', () => storage?.getProfile() ?? null)
 ipcMain.handle('profile:save', (_e, profile: Profile) => {
+  if (!profile || typeof profile.username !== 'string') return
+  profile.username = profile.username.slice(0, 64)
+  if (profile.avatar !== null && typeof profile.avatar === 'string' && profile.avatar.length > 1048576) return
   storage?.saveProfile(profile)
   // Broadcast updated profile to all connected peers
   p2pServer?.broadcastProfile(profile.username, profile.avatar)
@@ -996,6 +1039,9 @@ ipcMain.handle('group:list', () => {
 })
 
 ipcMain.handle('group:create', (_event, name: string, memberContactIds: string[]) => {
+  if (typeof name !== 'string') return { success: false, error: 'Invalid name' }
+  name = name.slice(0, 64)
+  if (!Array.isArray(memberContactIds) || memberContactIds.length > 100) return { success: false, error: 'Invalid members' }
   if (!storage || !p2pServer) return { success: false, error: 'Not initialized' }
 
   const contacts = storage.getContacts()
@@ -1035,6 +1081,7 @@ ipcMain.handle('group:create', (_event, name: string, memberContactIds: string[]
     members,
     myContactId: '',
     createdAt: Date.now(),
+    groupKey: generateGroupKey(),
   }
 
   storage.addGroup(group)
@@ -1192,6 +1239,8 @@ ipcMain.handle('group:messages', (_event, groupId: string) => {
 })
 
 ipcMain.handle('group:send', (_event, groupId: string, content: string) => {
+  if (typeof groupId !== 'string' || groupId.length > 128) return { success: false, error: 'Invalid group' }
+  if (typeof content !== 'string' || content.length > 65536) return { success: false, error: 'Message too long' }
   if (!storage || !p2pServer) return { success: false, error: 'Not initialized' }
 
   const groups = storage.getGroups()
@@ -1220,6 +1269,12 @@ ipcMain.handle('group:send', (_event, groupId: string, content: string) => {
   }
   storage.addGroupMessage(groupId, msg)
 
+  // Encrypt content for the wire using the group key
+  const wireContent = group.groupKey ? encryptGroupPayload(content, group.groupKey) : content
+  const wireAttachment = (attachment && group.groupKey)
+    ? { ...attachment, data: encryptGroupPayload(attachment.data, group.groupKey) }
+    : attachment
+
   // Send to all connected group members
   const contacts = storage.getContacts()
   for (const member of group.members) {
@@ -1228,16 +1283,109 @@ ipcMain.handle('group:send', (_event, groupId: string, content: string) => {
     if (!contact) continue
     if (!p2pServer.isConnected(contact.id)) continue
     p2pServer.sendGroupMessage(
-      contact.id, groupId, id, myPublicKey, senderNickname, content, timestamp, attachment
+      contact.id, groupId, id, myPublicKey, senderNickname, wireContent, timestamp, wireAttachment
     )
   }
 
   return { success: true, id, timestamp }
 })
 
+// --- IPC: Embed metadata cache ---
+
+ipcMain.handle('embed:cache:get', (_e, url: string) => storage?.getEmbedCacheEntry(url) ?? null)
+ipcMain.handle('embed:cache:set', (_e, url: string, data: object) => { storage?.setEmbedCacheEntry(url, data as any) })
+
+// --- IPC: Link embed metadata fetching (routed through Tor for privacy) ---
+
+ipcMain.handle('embed:fetch', async (_event, url: string): Promise<{
+  title?: string; description?: string; image?: string; siteName?: string; favicon?: string
+} | null> => {
+  if (!torController || torStatus.status !== 'connected') return null
+  try {
+    const { SocksClient } = await import('socks')
+    const parsedUrl = new URL(url)
+    const hostname = parsedUrl.hostname
+    const port = parsedUrl.port ? parseInt(parsedUrl.port) : (parsedUrl.protocol === 'https:' ? 443 : 80)
+    const path = parsedUrl.pathname + parsedUrl.search
+
+    const { socket } = await SocksClient.createConnection({
+      proxy: { host: '127.0.0.1', port: torController.socksPort, type: 5 },
+      command: 'connect',
+      destination: { host: hostname, port },
+      timeout: 15000
+    })
+
+    const html = await new Promise<string>((resolve, reject) => {
+      let raw = ''
+      const timeout = setTimeout(() => { socket.destroy(); reject(new Error('timeout')) }, 15000)
+
+      if (parsedUrl.protocol === 'https:') {
+        const tls = require('tls')
+        const tlsSocket = tls.connect({ socket, servername: hostname, rejectUnauthorized: true })
+        tlsSocket.write(`GET ${path || '/'} HTTP/1.1\r\nHost: ${hostname}\r\nUser-Agent: Mozilla/5.0\r\nAccept: text/html\r\nConnection: close\r\n\r\n`)
+        tlsSocket.on('data', (d: Buffer) => {
+          raw += d.toString('utf8', 0, Math.min(d.length, 50000))
+          if (raw.length > 100000) { clearTimeout(timeout); tlsSocket.destroy(); resolve(raw) }
+        })
+        tlsSocket.on('end', () => { clearTimeout(timeout); resolve(raw) })
+        tlsSocket.on('error', (e: Error) => { clearTimeout(timeout); reject(e) })
+      } else {
+        socket.write(`GET ${path || '/'} HTTP/1.1\r\nHost: ${hostname}\r\nUser-Agent: Mozilla/5.0\r\nAccept: text/html\r\nConnection: close\r\n\r\n`)
+        socket.on('data', (d: Buffer) => {
+          raw += d.toString('utf8', 0, Math.min(d.length, 50000))
+          if (raw.length > 100000) { clearTimeout(timeout); socket.destroy(); resolve(raw) }
+        })
+        socket.on('end', () => { clearTimeout(timeout); resolve(raw) })
+        socket.on('error', (e: Error) => { clearTimeout(timeout); reject(e) })
+      }
+    })
+
+    const body = html.split('\r\n\r\n').slice(1).join('\r\n\r\n')
+    const getMeta = (prop: string): string | undefined => {
+      const m = body.match(new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]*content=["']([^"']+)["']`, 'i'))
+              ?? body.match(new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]*(?:property|name)=["']${prop}["']`, 'i'))
+      return m?.[1]
+    }
+    const getTag = (tag: string): string | undefined => {
+      const m = body.match(new RegExp(`<${tag}[^>]*>([^<]+)</${tag}>`, 'i'))
+      return m?.[1]?.trim()
+    }
+    const getFavicon = (): string | undefined => {
+      const m = body.match(/<link[^>]+rel=["'](?:shortcut )?icon["'][^>]*href=["']([^"']+)["']/i)
+              ?? body.match(/<link[^>]+href=["']([^"']+)["'][^>]*rel=["'](?:shortcut )?icon["']/i)
+      if (!m) return `${parsedUrl.protocol}//${hostname}/favicon.ico`
+      const href = m[1]
+      if (href.startsWith('http')) return href
+      if (href.startsWith('//')) return `${parsedUrl.protocol}${href}`
+      return `${parsedUrl.protocol}//${hostname}${href.startsWith('/') ? '' : '/'}${href}`
+    }
+
+    const title = getMeta('og:title') ?? getMeta('twitter:title') ?? getTag('title')
+    const description = getMeta('og:description') ?? getMeta('twitter:description') ?? getMeta('description')
+    const image = getMeta('og:image') ?? getMeta('twitter:image')
+    const siteName = getMeta('og:site_name') ?? hostname.replace(/^www\./, '')
+    const favicon = getFavicon()
+
+    if (!title && !description) return null
+    return { title, description, image, siteName, favicon }
+  } catch {
+    return null
+  }
+})
+
 app.whenReady().then(async () => {
   app.setAppUserModelId('Acuate.chat')
   Menu.setApplicationMenu(null)
+
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Referrer-Policy': ['strict-origin-when-cross-origin'],
+      },
+    })
+  })
+
   createWindow()
 
   app.on('activate', () => {

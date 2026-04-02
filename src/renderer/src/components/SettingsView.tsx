@@ -4,7 +4,8 @@ import { motion } from 'framer-motion'
 import {
   LuMessageSquare, LuImage, LuCheck,
   LuGithub, LuExternalLink, LuShield,
-  LuBell, LuSmile, LuUser, LuCamera, LuX, LuShieldCheck, LuRefreshCw, LuTriangleAlert
+  LuBell, LuSmile, LuCamera, LuX, LuShieldCheck, LuRefreshCw, LuTriangleAlert,
+  LuLink, LuPlus, LuBan
 } from 'react-icons/lu'
 import { C } from '../theme'
 
@@ -158,37 +159,128 @@ function stringToColor(str: string): string {
   return colors[Math.abs(hash) % colors.length]
 }
 
+function DomainList({ description, value, onChange, placeholder, accentColor }: {
+  description: string
+  value: string[]
+  onChange: (v: string[]) => void
+  placeholder?: string
+  accentColor?: string
+}): React.ReactElement {
+  const [input, setInput] = useState('')
+  const accent = accentColor ?? C.accent
+
+  const add = () => {
+    const domain = input.trim().toLowerCase()
+      .replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]
+    if (!domain || value.includes(domain)) { setInput(''); return }
+    onChange([...value, domain])
+    setInput('')
+  }
+
+  return (
+    <Box>
+      <Text fontSize="11px" color={C.textMuted} mb="8px">{description}</Text>
+      <HStack mb="8px" spacing="6px">
+        <Input
+          size="sm" value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && add()}
+          placeholder={placeholder ?? 'example.com'}
+          bg={C.card} border={`1px solid ${C.border}`} borderRadius="8px"
+          color={C.textPrimary} _placeholder={{ color: C.textFaint }}
+          _focus={{ borderColor: accent, boxShadow: `0 0 0 1px ${accent}` }}
+        />
+        <Flex
+          as="button" flexShrink={0}
+          w="30px" h="30px" borderRadius="8px"
+          bg={accent} color="white"
+          align="center" justify="center"
+          cursor="pointer" onClick={add}
+          _hover={{ opacity: 0.85 }}
+          sx={{ transition: 'opacity 0.12s' }}
+        >
+          <LuPlus size={13} />
+        </Flex>
+      </HStack>
+      {value.length === 0 ? (
+        <Text fontSize="11px" color={C.textFaint} fontStyle="italic">None added</Text>
+      ) : (
+        <Flex flexWrap="wrap" gap="6px">
+          {value.map(d => (
+            <HStack key={d} spacing="4px" px="10px" py="4px"
+              bg={C.card} border={`1px solid ${C.border}`} borderRadius="20px">
+              <Text fontSize="11px" color={C.textSecondary}>{d}</Text>
+              <Box
+                as="button" cursor="pointer"
+                color={C.textFaint} _hover={{ color: C.textMuted }}
+                onClick={() => onChange(value.filter(x => x !== d))}
+                sx={{ transition: 'color 0.1s' }}
+              >
+                <LuX size={10} />
+              </Box>
+            </HStack>
+          ))}
+        </Flex>
+      )}
+    </Box>
+  )
+}
+
+interface ContactInfo {
+  id: string
+  nickname: string
+  avatar: string | null
+  publicKey: string
+}
+
 export function SettingsView(): React.ReactElement {
   const [messageRetention, setMessageRetention] = useState<number | null>(null)
   const [mediaRetention, setMediaRetention] = useState<number | null>(null)
   const [desktopNotifications, setDesktopNotifications] = useState(true)
   const [twemoji, setTwemoji] = useState(true)
   const [requireApproval, setRequireApproval] = useState(false)
+  const [embedsEnabled, setEmbedsEnabled] = useState(true)
+  const [embedAllowDomains, setEmbedAllowDomains] = useState<string[]>([])
+  const [embedBlockDomains, setEmbedBlockDomains] = useState<string[]>([])
   const [saved, setSaved] = useState(false)
   const [regenConfirm, setRegenConfirm] = useState(false)
   const [regenLoading, setRegenLoading] = useState(false)
   const [regenDone, setRegenDone] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [blockedKeys, setBlockedKeys] = useState<string[]>([])
+  const [allContacts, setAllContacts] = useState<ContactInfo[]>([])
 
   // Profile state
   const [username, setUsername] = useState('')
   const [avatar, setAvatar] = useState<string | null>(null)
   const avatarInputRef = useRef<HTMLInputElement>(null)
 
+  const refreshBlocked = useCallback(async () => {
+    const keys = await window.acuate.getBlockedKeys()
+    setBlockedKeys(keys)
+  }, [])
+
   useEffect(() => {
     Promise.all([
       window.acuate.getSettings(),
       window.acuate.getProfile(),
-    ]).then(([s, p]) => {
+      window.acuate.getBlockedKeys(),
+      window.acuate.listContacts(),
+    ]).then(([s, p, blocked, contacts]) => {
       setMessageRetention(s.messageRetentionDays)
       setMediaRetention(s.mediaRetentionDays)
       setDesktopNotifications(s.desktopNotifications)
       setTwemoji(s.twemoji)
       setRequireApproval(s.requireApproval)
+      setEmbedsEnabled(s.embedsEnabled)
+      setEmbedAllowDomains(s.embedAllowDomains)
+      setEmbedBlockDomains(s.embedBlockDomains)
       if (p) {
         setUsername(p.username)
         setAvatar(p.avatar)
       }
+      setBlockedKeys(blocked)
+      setAllContacts(contacts.map(c => ({ id: c.id, nickname: c.nickname, avatar: c.avatar, publicKey: c.publicKey })))
       setLoading(false)
     })
   }, [])
@@ -214,12 +306,15 @@ export function SettingsView(): React.ReactElement {
         desktopNotifications,
         twemoji,
         requireApproval,
+        embedsEnabled,
+        embedAllowDomains,
+        embedBlockDomains,
       }),
       window.acuate.saveProfile({ username: username.trim() || 'Anonymous', avatar }),
     ])
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
-  }, [messageRetention, mediaRetention, desktopNotifications, twemoji, requireApproval, username, avatar])
+  }, [messageRetention, mediaRetention, desktopNotifications, twemoji, requireApproval, embedsEnabled, embedAllowDomains, embedBlockDomains, username, avatar])
 
   if (loading) return (
     <Flex flex={1} align="center" justify="center" bg={C.panel}>
@@ -369,6 +464,113 @@ export function SettingsView(): React.ReactElement {
             </Box>
           </Box>
 
+          {/* Embeds */}
+          <Box>
+            <SectionLabel>Link Embeds</SectionLabel>
+            <Box bg={C.elevated} borderRadius="14px" border={`1px solid ${C.border}`} overflow="hidden">
+              <ToggleRow
+                icon={<LuLink size={15} color={embedsEnabled ? C.accent : C.textMuted} />}
+                label="Enable link embeds"
+                description="Show previews and media players for links in messages"
+                value={embedsEnabled}
+                onChange={setEmbedsEnabled}
+              />
+              {embedsEnabled && (
+                <>
+                  <Box borderTop={`1px solid ${C.borderFaint}`} />
+                  <Box px={5} py={4}>
+                    <DomainList
+                      description="Auto-load domains — embeds load instantly without prompting (in addition to built-ins like GitHub, Reddit)"
+                      value={embedAllowDomains}
+                      onChange={setEmbedAllowDomains}
+                      placeholder="example.com"
+                      accentColor={C.accent}
+                    />
+                  </Box>
+                  <Box borderTop={`1px solid ${C.borderFaint}`} />
+                  <Box px={5} py={4}>
+                    <DomainList
+                      description="Blocked domains — embeds are never shown for these sites"
+                      value={embedBlockDomains}
+                      onChange={setEmbedBlockDomains}
+                      placeholder="example.com"
+                      accentColor={C.red}
+                    />
+                  </Box>
+                </>
+              )}
+            </Box>
+          </Box>
+
+          {/* Blocked Users */}
+          <Box>
+            <SectionLabel>Blocked Users</SectionLabel>
+            <Box bg={C.elevated} borderRadius="14px" border={`1px solid ${C.border}`} overflow="hidden">
+              {blockedKeys.length === 0 ? (
+                <Flex px={5} py={4} align="center" gap={3}>
+                  <Flex
+                    w="36px" h="36px" borderRadius="10px" flexShrink={0}
+                    bg={C.card} border={`1px solid ${C.border}`}
+                    align="center" justify="center"
+                  >
+                    <LuBan size={15} color={C.textFaint} />
+                  </Flex>
+                  <Text fontSize="sm" color={C.textMuted}>No blocked users</Text>
+                </Flex>
+              ) : (
+                blockedKeys.map((key, i) => {
+                  const contact = allContacts.find(c => c.publicKey === key)
+                  const label = contact?.nickname ?? `${key.slice(0, 12)}…`
+                  const av = contact?.avatar ?? null
+                  const bg = stringToColor(label)
+                  return (
+                    <React.Fragment key={key}>
+                      {i > 0 && <Box borderTop={`1px solid ${C.borderFaint}`} />}
+                      <HStack px={5} py="11px" spacing={3}>
+                        <Flex
+                          w="34px" h="34px" borderRadius="full" flexShrink={0}
+                          bg={bg} align="center" justify="center"
+                          fontSize="11px" fontWeight="700" color="white" overflow="hidden"
+                        >
+                          {av
+                            ? <Box as="img" src={av} w="full" h="full" objectFit="cover" display="block" />
+                            : getInitials(label)
+                          }
+                        </Flex>
+                        <Box flex={1} minW={0}>
+                          <Text fontSize="sm" fontWeight="500" color={C.textPrimary} isTruncated>
+                            {label}
+                          </Text>
+                          {!contact && (
+                            <Text fontSize="10px" color={C.textFaint} fontFamily="monospace">
+                              Unknown contact
+                            </Text>
+                          )}
+                        </Box>
+                        <Flex
+                          as="button" cursor="pointer"
+                          px="10px" h="28px" borderRadius="8px"
+                          border={`1px solid ${C.border}`} bg={C.card}
+                          align="center" justify="center" gap="5px"
+                          color={C.textSecondary} fontSize="xs" fontWeight="500"
+                          _hover={{ bg: '#34d39912', borderColor: '#34d39935', color: '#34d399' }}
+                          sx={{ transition: 'all 0.12s' }}
+                          onClick={async () => {
+                            if (contact) await window.acuate.unblockContact(contact.id)
+                            await refreshBlocked()
+                          }}
+                        >
+                          <LuShieldCheck size={12} />
+                          <Text>Unblock</Text>
+                        </Flex>
+                      </HStack>
+                    </React.Fragment>
+                  )
+                })
+              )}
+            </Box>
+          </Box>
+
           {/* Data retention */}
           <Box>
             <SectionLabel>Data Retention</SectionLabel>
@@ -515,7 +717,7 @@ export function SettingsView(): React.ReactElement {
                   <Text fontSize="sm" fontWeight="600" color={C.textPrimary} letterSpacing="-0.1px">
                     Acuate.chat
                   </Text>
-                  <Text fontSize="xs" color={C.textMuted} mt="1px">Version 0.1.0</Text>
+                  <Text fontSize="xs" color={C.textMuted} mt="1px">Version 1.0.1</Text>
                 </Box>
               </HStack>
 

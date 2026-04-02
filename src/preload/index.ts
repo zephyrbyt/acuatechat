@@ -182,10 +182,10 @@ const api = {
   saveProfile: (profile: Profile): Promise<void> =>
     ipcRenderer.invoke('profile:save', profile),
 
-  getSettings: (): Promise<{ messageRetentionDays: number | null; mediaRetentionDays: number | null; desktopNotifications: boolean; twemoji: boolean; requireApproval: boolean }> =>
+  getSettings: (): Promise<{ messageRetentionDays: number | null; mediaRetentionDays: number | null; desktopNotifications: boolean; twemoji: boolean; requireApproval: boolean; embedsEnabled: boolean; embedAllowDomains: string[]; embedBlockDomains: string[] }> =>
     ipcRenderer.invoke('settings:get'),
 
-  saveSettings: (settings: { messageRetentionDays: number | null; mediaRetentionDays: number | null; desktopNotifications: boolean; twemoji: boolean; requireApproval: boolean }): Promise<void> =>
+  saveSettings: (settings: { messageRetentionDays: number | null; mediaRetentionDays: number | null; desktopNotifications: boolean; twemoji: boolean; requireApproval: boolean; embedsEnabled: boolean; embedAllowDomains: string[]; embedBlockDomains: string[] }): Promise<void> =>
     ipcRenderer.invoke('settings:save', settings),
 
   // Listen (main -> renderer)
@@ -237,6 +237,16 @@ const api = {
     ipcRenderer.on('app:ready', listener)
     return () => ipcRenderer.removeListener('app:ready', listener)
   },
+
+  // Link embeds
+  fetchEmbed: (url: string): Promise<{ title?: string; description?: string; image?: string; siteName?: string; favicon?: string } | null> =>
+    ipcRenderer.invoke('embed:fetch', url),
+
+  embedCacheGet: (url: string): Promise<{ title?: string; description?: string; image?: string; siteName?: string; favicon?: string } | null> =>
+    ipcRenderer.invoke('embed:cache:get', url),
+
+  embedCacheSet: (url: string, data: { title?: string; description?: string; image?: string; siteName?: string; favicon?: string }): Promise<void> =>
+    ipcRenderer.invoke('embed:cache:set', url, data),
 
   // Window controls
   windowMinimize: () => ipcRenderer.send('window:minimize'),

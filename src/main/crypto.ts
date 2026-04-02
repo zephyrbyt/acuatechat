@@ -189,4 +189,34 @@ export function decryptIdentityWithPhrase(locked: RecoveryLockedIdentity, mnemon
   return decryptData(locked.payload, key)
 }
 
+// --- Group message encryption (nacl.secretbox with a per-group symmetric key) ---
+
+export function generateGroupKey(): string {
+  return encodeBase64(nacl.randomBytes(nacl.secretbox.keyLength))
+}
+
+export function encryptGroupPayload(plaintext: string, groupKeyB64: string): string {
+  const key = decodeBase64(groupKeyB64)
+  const nonce = nacl.randomBytes(nacl.secretbox.nonceLength)
+  const box = nacl.secretbox(decodeUTF8(plaintext), nonce, key)
+  const out = new Uint8Array(nonce.length + box.length)
+  out.set(nonce)
+  out.set(box, nonce.length)
+  return encodeBase64(out)
+}
+
+export function decryptGroupPayload(ciphertextB64: string, groupKeyB64: string): string | null {
+  try {
+    const key = decodeBase64(groupKeyB64)
+    const data = decodeBase64(ciphertextB64)
+    const nonce = data.slice(0, nacl.secretbox.nonceLength)
+    const box = data.slice(nacl.secretbox.nonceLength)
+    const plain = nacl.secretbox.open(box, nonce, key)
+    if (!plain) return null
+    return encodeUTF8(plain)
+  } catch {
+    return null
+  }
+}
+
 export { encodeBase64, decodeBase64, encodeUTF8, decodeUTF8 }

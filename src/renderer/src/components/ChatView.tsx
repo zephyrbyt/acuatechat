@@ -1,11 +1,13 @@
-import React, { useRef, useEffect, useCallback } from 'react'
+import React, { useRef, useEffect, useCallback, useState } from 'react'
 import { Box, Flex, Text, VStack, HStack } from '@chakra-ui/react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { LuLock, LuMessageSquare, LuDownload, LuBan, LuWifiOff, LuClock } from 'react-icons/lu'
+import { LuLock, LuMessageSquare, LuDownload, LuBan, LuWifiOff, LuClock, LuShieldCheck } from 'react-icons/lu'
 import type { Attachment, Contact, Message } from '../App'
 import { MessageInput } from './MessageInput'
-import { TwemojiText } from './TwemojiText'
 import { VideoPlayer } from './VideoPlayer'
+import { LinkEmbed, extractUrls, EmbedSettings } from './LinkEmbed'
+import { MessageText, ExternalLinkWarning, useLinkWarning } from './MessageContent'
+import { KeyVerificationModal } from './KeyVerificationModal'
 import { C } from '../theme'
 
 const MotionBox = motion(Box)
@@ -72,7 +74,7 @@ function AttachmentPreview({ attachment, isSent, onLoad }: { attachment: Attachm
   )
 }
 
-function MessageBubble({ message, index, useTwemoji, onMediaLoad, contactAvatar, contactName, isQueued }: { message: Message; index: number; useTwemoji: boolean; onMediaLoad?: () => void; contactAvatar?: string | null; contactName?: string; isQueued?: boolean }): React.ReactElement {
+function MessageBubble({ message, index, useTwemoji, onMediaLoad, contactAvatar, contactName, isQueued, embedSettings, onLinkClick }: { message: Message; index: number; useTwemoji: boolean; onMediaLoad?: () => void; contactAvatar?: string | null; contactName?: string; isQueued?: boolean; embedSettings: EmbedSettings; onLinkClick: (url: string) => void }): React.ReactElement {
   const isSent = message.direction === 'sent'
   const hasText = message.content.trim().length > 0
   const hasAttachment = !!message.attachment
@@ -126,21 +128,20 @@ function MessageBubble({ message, index, useTwemoji, onMediaLoad, contactAvatar,
             )}
             {hasText && (
               <Box px={hasAttachment ? 1 : 0} pb={hasAttachment ? 1 : 0}>
-                {useTwemoji ? (
-                  <TwemojiText
-                    text={message.content}
-                    fontSize="14px"
-                    lineHeight={1.6}
-                    color={isSent ? 'white' : C.textPrimary}
-                  />
-                ) : (
-                  <Text fontSize="sm" lineHeight="1.6" letterSpacing="-0.1px">
-                    {message.content}
-                  </Text>
-                )}
+                <MessageText
+                  text={message.content}
+                  isSent={isSent}
+                  useTwemoji={useTwemoji}
+                  fontSize="14px"
+                  color={isSent ? 'white' : C.textPrimary}
+                  onLinkClick={onLinkClick}
+                />
               </Box>
             )}
           </Box>
+          {extractUrls(message.content).map(url => (
+            <LinkEmbed key={url} url={url} isSent={isSent} embedSettings={embedSettings} onLoad={onMediaLoad} />
+          ))}
           {isSent && isQueued ? (
             <HStack spacing="4px" justify="flex-end" mt="4px" px="2px">
               <LuClock size={9} color={C.textFaint} />
@@ -169,10 +170,28 @@ interface ChatViewProps {
   isContactTyping: boolean
   onTyping: (typing: boolean) => void
   useTwemoji: boolean
+  embedSettings: EmbedSettings
+  myPublicKey: string | null
 }
 
-export function ChatView({ contact, messages, isBlocked, queuedIds, onSendMessage, isContactTyping, onTyping, useTwemoji }: ChatViewProps): React.ReactElement {
+export function ChatView({ contact, messages, isBlocked, queuedIds, onSendMessage, isContactTyping, onTyping, useTwemoji, embedSettings, myPublicKey }: ChatViewProps): React.ReactElement {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const { pendingUrl, handleLinkClick, handleConfirm, handleClose } = useLinkWarning()
+  const [showKeysModal, setShowKeysModal] = useState(false)
+
+  const slashCommands = React.useMemo(() => {
+    if (!myPublicKey || !contact.publicKey) return []
+    return [
+      {
+        command: 'keys',
+        description: 'Verify encryption keys to confirm your connection is authentic',
+        icon: <LuShieldCheck size={14} color={C.accent} />,
+        onSelect: () => setShowKeysModal(true),
+      },
+    ]
+  }, [myPublicKey, contact.publicKey])
+
+  const contentRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = useCallback((smooth = false) => {
     const el = scrollContainerRef.current
@@ -183,6 +202,15 @@ export function ChatView({ contact, messages, isBlocked, queuedIds, onSendMessag
   useEffect(() => {
     scrollToBottom(false)
   }, [messages, scrollToBottom])
+
+  // Scroll to bottom whenever content height grows (images, embeds, videos loading in)
+  useEffect(() => {
+    const content = contentRef.current
+    if (!content) return
+    const observer = new ResizeObserver(() => scrollToBottom(false))
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [scrollToBottom])
 
   return (
     <Flex direction="column" h="full" bg={C.panel}>
@@ -274,7 +302,7 @@ export function ChatView({ contact, messages, isBlocked, queuedIds, onSendMessag
             </Box>
           </Flex>
         ) : (
-          <VStack spacing={0} align="stretch">
+          <VStack ref={contentRef} spacing={0} align="stretch">
             {messages.map((msg, index) => (
               <React.Fragment key={msg.id}>
                 {shouldShowDateHeader(messages, index) && (
@@ -289,7 +317,7 @@ export function ChatView({ contact, messages, isBlocked, queuedIds, onSendMessag
                     </Box>
                   </Flex>
                 )}
-                <MessageBubble message={msg} index={index} useTwemoji={useTwemoji} onMediaLoad={scrollToBottom} contactAvatar={contact.avatar} contactName={contact.nickname} isQueued={queuedIds.has(msg.id)} />
+                <MessageBubble message={msg} index={index} useTwemoji={useTwemoji} onMediaLoad={scrollToBottom} contactAvatar={contact.avatar} contactName={contact.nickname} isQueued={queuedIds.has(msg.id)} embedSettings={embedSettings} onLinkClick={handleLinkClick} />
               </React.Fragment>
             ))}
           </VStack>
@@ -348,6 +376,19 @@ export function ChatView({ contact, messages, isBlocked, queuedIds, onSendMessag
           onTyping={onTyping}
           placeholder={`Message ${contact.nickname}…`}
           contactName={contact.nickname}
+          slashCommands={slashCommands}
+        />
+      )}
+
+      <ExternalLinkWarning url={pendingUrl} onClose={handleClose} onConfirm={handleConfirm} />
+
+      {myPublicKey && contact.publicKey && (
+        <KeyVerificationModal
+          isOpen={showKeysModal}
+          myPublicKey={myPublicKey}
+          contactPublicKey={contact.publicKey}
+          contactName={contact.nickname}
+          onClose={() => setShowKeysModal(false)}
         />
       )}
     </Flex>

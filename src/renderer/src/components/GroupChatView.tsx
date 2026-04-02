@@ -4,8 +4,9 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { LuLock, LuMessageSquare, LuDownload, LuUsers, LuUserPlus, LuWifiOff, LuUserMinus, LuUserCheck, LuShieldAlert, LuUserX, LuThumbsUp } from 'react-icons/lu'
 import type { Attachment, Contact, Group, GroupMessage } from '../App'
 import { MessageInput } from './MessageInput'
-import { TwemojiText } from './TwemojiText'
 import { VideoPlayer } from './VideoPlayer'
+import { LinkEmbed, extractUrls, EmbedSettings } from './LinkEmbed'
+import { MessageText, ExternalLinkWarning, useLinkWarning } from './MessageContent'
 import { C } from '../theme'
 
 const MotionBox = motion(Box)
@@ -164,7 +165,7 @@ function SystemMessage({ message, myPublicKey, onVoteCast }: {
   )
 }
 
-function GroupMessageBubble({ message, index, useTwemoji, onMediaLoad, members }: { message: GroupMessage; index: number; useTwemoji: boolean; onMediaLoad?: () => void; members: Group['members'] }): React.ReactElement {
+function GroupMessageBubble({ message, index, useTwemoji, onMediaLoad, members, embedSettings, onLinkClick }: { message: GroupMessage; index: number; useTwemoji: boolean; onMediaLoad?: () => void; members: Group['members']; embedSettings: EmbedSettings; onLinkClick: (url: string) => void }): React.ReactElement {
   const isSent = message.direction === 'sent'
   const hasText = message.content.trim().length > 0
   const hasAttachment = !!message.attachment
@@ -217,14 +218,20 @@ function GroupMessageBubble({ message, index, useTwemoji, onMediaLoad, members }
             )}
             {hasText && (
               <Box px={hasAttachment ? 1 : 0} pb={hasAttachment ? 1 : 0}>
-                {useTwemoji ? (
-                  <TwemojiText text={message.content} fontSize="14px" lineHeight={1.6} color={isSent ? 'white' : C.textPrimary} />
-                ) : (
-                  <Text fontSize="sm" lineHeight="1.6" letterSpacing="-0.1px">{message.content}</Text>
-                )}
+                <MessageText
+                  text={message.content}
+                  isSent={isSent}
+                  useTwemoji={useTwemoji}
+                  fontSize="14px"
+                  color={isSent ? 'white' : C.textPrimary}
+                  onLinkClick={onLinkClick}
+                />
               </Box>
             )}
           </Box>
+          {extractUrls(message.content).map(url => (
+            <LinkEmbed key={url} url={url} isSent={isSent} embedSettings={embedSettings} onLoad={onMediaLoad} />
+          ))}
           <Text fontSize="10px" color={C.textMuted} mt="4px" textAlign={isSent ? 'right' : 'left'} px="2px">
             {formatTimestamp(message.timestamp)}
           </Text>
@@ -245,6 +252,7 @@ interface GroupChatViewProps {
   onVotekick: (groupId: string, targetPublicKey: string) => Promise<void>
   onVoteCast: (groupId: string, voteId: string) => Promise<void>
   useTwemoji: boolean
+  embedSettings: EmbedSettings
 }
 
 function stringToColor2(str: string): string {
@@ -432,10 +440,11 @@ function VotekickModal({ group, myPublicKey, onKick, onClose }: {
   )
 }
 
-export function GroupChatView({ group, messages, contacts, onlineContactIds, myPublicKey, onSendMessage, onAddMembers, onVotekick, onVoteCast, useTwemoji }: GroupChatViewProps): React.ReactElement {
+export function GroupChatView({ group, messages, contacts, onlineContactIds, myPublicKey, onSendMessage, onAddMembers, onVotekick, onVoteCast, useTwemoji, embedSettings }: GroupChatViewProps): React.ReactElement {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [showAddMembers, setShowAddMembers] = useState(false)
   const [showVotekick, setShowVotekick] = useState(false)
+  const { pendingUrl, handleLinkClick, handleConfirm, handleClose } = useLinkWarning()
 
   const scrollToBottom = useCallback(() => {
     const el = scrollContainerRef.current
@@ -587,7 +596,7 @@ export function GroupChatView({ group, messages, contacts, onlineContactIds, myP
                 )}
                 {msg.direction === 'system'
                   ? <SystemMessage message={msg} myPublicKey={myPublicKey} onVoteCast={onVoteCast} />
-                  : <GroupMessageBubble message={msg} index={index} useTwemoji={useTwemoji} onMediaLoad={scrollToBottom} members={group.members} />
+                  : <GroupMessageBubble message={msg} index={index} useTwemoji={useTwemoji} onMediaLoad={scrollToBottom} members={group.members} embedSettings={embedSettings} onLinkClick={handleLinkClick} />
                 }
               </React.Fragment>
             ))}
@@ -620,6 +629,8 @@ export function GroupChatView({ group, messages, contacts, onlineContactIds, myP
           onClose={() => setShowVotekick(false)}
         />
       )}
+
+      <ExternalLinkWarning url={pendingUrl} onClose={handleClose} onConfirm={handleConfirm} />
     </Flex>
   )
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { Box, Flex, Text, HStack } from '@chakra-ui/react'
-import { LuDownload, LuRefreshCw } from 'react-icons/lu'
+import { motion, AnimatePresence } from 'framer-motion'
+import { LuDownload, LuRefreshCw, LuWifiOff, LuX } from 'react-icons/lu'
 import { Sidebar } from './components/Sidebar'
 import { ChatView } from './components/ChatView'
 import { GroupChatView } from './components/GroupChatView'
@@ -101,6 +102,7 @@ export default function App(): React.ReactElement | null {
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({})
   const [typingContacts, setTypingContacts] = useState<Record<string, boolean>>({})
   const [useTwemoji, setUseTwemoji] = useState(true)
+  const [embedSettings, setEmbedSettings] = useState({ enabled: true, allowDomains: [] as string[], blockDomains: [] as string[] })
   const [myPublicKey, setMyPublicKey] = useState<string | null>(null)
   const [groups, setGroups] = useState<Group[]>([])
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
@@ -109,6 +111,8 @@ export default function App(): React.ReactElement | null {
   const [groupUnreadCounts, setGroupUnreadCounts] = useState<Record<string, number>>({})
   const [updateState, setUpdateState] = useState<'idle' | 'available' | 'downloaded'>('idle')
   const [updateVersion, setUpdateVersion] = useState<string | null>(null)
+  const [showOfflineToast, setShowOfflineToast] = useState(false)
+  const [offlineToastDismissed, setOfflineToastDismissed] = useState(false)
   const [blockedKeys, setBlockedKeys] = useState<string[]>([])
   const [pendingContacts, setPendingContacts] = useState<Record<string, PendingContact>>({})
   // contactId -> set of message IDs that are queued (sent offline, not yet delivered)
@@ -155,13 +159,24 @@ export default function App(): React.ReactElement | null {
     setPhase('ready')
     window.acuate.getProfile().then(p => setProfile(p as UserProfile | null))
     window.acuate.getTorStatus().then(status => setTorStatus(status as TorStatusData))
-    window.acuate.getSettings().then(s => setUseTwemoji(s.twemoji))
+    window.acuate.getSettings().then(s => {
+      setUseTwemoji(s.twemoji)
+      setEmbedSettings({ enabled: s.embedsEnabled, allowDomains: s.embedAllowDomains, blockDomains: s.embedBlockDomains })
+    })
     window.acuate.getMyPublicKey().then(k => setMyPublicKey(k))
     window.acuate.getBlockedKeys().then(keys => setBlockedKeys(keys))
     window.acuate.getPendingContacts().then(p => setPendingContacts(p))
     refreshContacts()
     refreshGroups()
   }, [refreshContacts, refreshGroups])
+
+  // Show a toast after 10 s if the user has contacts but all are still offline
+  useEffect(() => {
+    if (phase !== 'ready' || offlineToastDismissed || contacts.length === 0) return
+    if (contacts.some(c => c.online)) { setShowOfflineToast(false); return }
+    const t = setTimeout(() => setShowOfflineToast(true), 10000)
+    return () => clearTimeout(t)
+  }, [phase, contacts, offlineToastDismissed])
 
   useEffect(() => {
     if (phase !== 'ready') return
@@ -523,7 +538,10 @@ export default function App(): React.ReactElement | null {
           onShowConnect={() => setShowConnectModal(true)}
           onShowCreateGroup={() => setShowCreateGroup(true)}
           onShowSettings={() => {
-            if (showSettings) window.acuate.getSettings().then(s => setUseTwemoji(s.twemoji))
+            if (showSettings) window.acuate.getSettings().then(s => {
+              setUseTwemoji(s.twemoji)
+              setEmbedSettings({ enabled: s.embedsEnabled, allowDomains: s.embedAllowDomains, blockDomains: s.embedBlockDomains })
+            })
             setShowSettings(s => !s)
           }}
           showingSettings={showSettings}
@@ -543,6 +561,7 @@ export default function App(): React.ReactElement | null {
               onVotekick={handleVotekick}
               onVoteCast={handleVoteCast}
               useTwemoji={useTwemoji}
+              embedSettings={embedSettings}
             />
           ) : selectedContact ? (
             <ChatView
@@ -554,6 +573,8 @@ export default function App(): React.ReactElement | null {
               isContactTyping={typingContacts[selectedContactId!] ?? false}
               onTyping={(typing) => selectedContactId && window.acuate.sendTyping(selectedContactId, typing)}
               useTwemoji={useTwemoji}
+              embedSettings={embedSettings}
+              myPublicKey={myPublicKey}
             />
           ) : (
             <Flex
@@ -651,6 +672,58 @@ export default function App(): React.ReactElement | null {
         onCreate={handleCreateGroup}
         contacts={contacts}
       />
+
+      {/* Offline contacts toast */}
+      <AnimatePresence>
+        {showOfflineToast && (
+          <Box
+            position="fixed" bottom={6} left={0} right={0}
+            display="flex" justifyContent="center"
+            pointerEvents="none" zIndex={400}
+          >
+            <motion.div
+              style={{ pointerEvents: 'auto' }}
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 16 }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <Box
+                bg="#13151d" border="1px solid #f59e0b28"
+                borderRadius="14px" px={4} py="12px"
+                boxShadow="0 8px 32px rgba(0,0,0,0.55)"
+                maxW="400px"
+              >
+                <HStack spacing={3} align="flex-start">
+                  <Flex
+                    w="32px" h="32px" borderRadius="9px" flexShrink={0}
+                    bg="#f59e0b12" border="1px solid #f59e0b28"
+                    align="center" justify="center" mt="1px"
+                  >
+                    <LuWifiOff size={14} color="#f59e0b" />
+                  </Flex>
+                  <Box flex={1}>
+                    <Text fontSize="sm" fontWeight="600" color="#e8eaf0" mb="3px">
+                      Contacts appear offline
+                    </Text>
+                    <Text fontSize="xs" color="#6b7080" lineHeight="1.7">
+                      Tor may still be warming up — connections typically establish within a minute of launch.
+                    </Text>
+                  </Box>
+                  <Box
+                    as="button" cursor="pointer" flexShrink={0} mt="2px"
+                    color="#555870" _hover={{ color: '#888ba0' }}
+                    sx={{ transition: 'color 0.12s' }}
+                    onClick={() => { setShowOfflineToast(false); setOfflineToastDismissed(true) }}
+                  >
+                    <LuX size={14} />
+                  </Box>
+                </HStack>
+              </Box>
+            </motion.div>
+          </Box>
+        )}
+      </AnimatePresence>
     </Flex>
   )
 }

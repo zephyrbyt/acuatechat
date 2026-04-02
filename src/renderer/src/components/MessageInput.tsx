@@ -1,8 +1,11 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { Box, Flex, Textarea, Text } from '@chakra-ui/react'
-import { motion } from 'framer-motion'
-import { LuSend, LuPaperclip, LuX, LuFileVideo, LuImage } from 'react-icons/lu'
+import { motion, AnimatePresence } from 'framer-motion'
+import { LuSend, LuPaperclip, LuX, LuFileVideo, LuImage, LuSmile } from 'react-icons/lu'
+import Picker from '@emoji-mart/react'
+import data from '@emoji-mart/data'
 import type { Attachment } from '../App'
+import { SlashCommandMenu, SlashCommand } from './SlashCommandMenu'
 import { C } from '../theme'
 
 const MotionBox = motion(Box)
@@ -16,6 +19,7 @@ interface MessageInputProps {
   isDisabled?: boolean
   placeholder?: string
   contactName?: string
+  slashCommands?: SlashCommand[]
 }
 
 export function MessageInput({
@@ -23,6 +27,7 @@ export function MessageInput({
   onTyping,
   isDisabled = false,
   placeholder = 'Type a message…',
+  slashCommands = [],
 }: MessageInputProps): React.ReactElement {
   const [value, setValue] = useState('')
   const [isSending, setIsSending] = useState(false)
@@ -89,6 +94,37 @@ export function MessageInput({
     }
   }, [onTyping, isDisabled, stopTyping])
 
+  const [showPicker, setShowPicker] = useState(false)
+  const [slashIndex, setSlashIndex] = useState(0)
+
+  const showSlashMenu = value.startsWith('/') && !value.includes(' ') && slashCommands.length > 0
+  const slashQuery = showSlashMenu ? value.slice(1) : ''
+  const filteredSlash = slashQuery
+    ? slashCommands.filter(c => c.command.startsWith(slashQuery.toLowerCase()))
+    : slashCommands
+
+  const handleSlashSelect = useCallback((cmd: SlashCommand) => {
+    cmd.onSelect()
+    handleValueChange('')
+    setSlashIndex(0)
+    textareaRef.current?.focus()
+  }, [handleValueChange])
+
+  const handleEmojiSelect = useCallback((emoji: { native: string }) => {
+    const textarea = textareaRef.current
+    const native = emoji.native
+    if (!textarea) { handleValueChange(value + native); return }
+    const start = textarea.selectionStart ?? value.length
+    const end = textarea.selectionEnd ?? value.length
+    const next = value.slice(0, start) + native + value.slice(end)
+    handleValueChange(next)
+    setShowPicker(false)
+    requestAnimationFrame(() => {
+      textarea.focus()
+      textarea.setSelectionRange(start + native.length, start + native.length)
+    })
+  }, [value, handleValueChange])
+
   const handleSend = useCallback(async () => {
     const content = value.trim()
     if ((!content && !attachment) || isSending || isDisabled) return
@@ -107,11 +143,33 @@ export function MessageInput({
   }, [value, attachment, isSending, isDisabled, onSend, stopTyping])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showSlashMenu && filteredSlash.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSlashIndex(i => Math.min(i + 1, filteredSlash.length - 1))
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSlashIndex(i => Math.max(i - 1, 0))
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        handleValueChange('')
+        return
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && filteredSlash[slashIndex]) {
+        e.preventDefault()
+        handleSlashSelect(filteredSlash[slashIndex])
+        return
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
     }
-  }, [handleSend])
+  }, [showSlashMenu, filteredSlash, slashIndex, handleSend, handleSlashSelect, handleValueChange])
 
   const canSend = (value.trim().length > 0 || !!attachment) && !isDisabled && !isSending
   const isVideo = attachment?.type === 'video/mp4'
@@ -122,7 +180,55 @@ export function MessageInput({
       bg={C.surface}
       borderTop={`1px solid ${C.borderFaint}`}
       flexShrink={0}
+      position="relative"
     >
+      {/* Slash command menu */}
+      <AnimatePresence>
+        {showSlashMenu && (
+          <motion.div
+            style={{ position: 'absolute', bottom: '100%', left: '24px', right: '24px', marginBottom: '8px', zIndex: 100 }}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <SlashCommandMenu
+              commands={slashCommands}
+              query={slashQuery}
+              selectedIndex={slashIndex}
+              onSelect={handleSlashSelect}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Emoji picker */}
+      <AnimatePresence>
+        {showPicker && (
+          <>
+            <Box
+              position="fixed" inset={0} zIndex={99}
+              onClick={() => setShowPicker(false)}
+            />
+            <motion.div
+              style={{ position: 'absolute', bottom: '100%', right: '24px', marginBottom: '8px', zIndex: 100, filter: 'drop-shadow(0 8px 32px rgba(0,0,0,0.6))' }}
+              initial={{ opacity: 0, scale: 0.95, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 8 }}
+              transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <Picker
+                data={data}
+                onEmojiSelect={handleEmojiSelect}
+                theme="dark"
+                previewPosition="none"
+                skinTonePosition="search"
+                set="native"
+              />
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
       {/* Attachment preview */}
       {attachment && (
         <Box mb={3} display="inline-block" position="relative">
@@ -181,7 +287,7 @@ export function MessageInput({
 
       {/* Input row */}
       <Flex
-        align="flex-end" gap={3}
+        align="center" gap={3}
         bg={C.elevated}
         borderRadius="14px"
         border={`1px solid ${C.border}`}
@@ -243,6 +349,23 @@ export function MessageInput({
           overflowY="auto"
           sx={{ '&::-webkit-scrollbar': { display: 'none' } }}
         />
+
+        {/* Emoji */}
+        <Flex
+          as="button"
+          onClick={() => !isDisabled && setShowPicker(p => !p)}
+          w="32px" h="32px" borderRadius="9px" flexShrink={0}
+          align="center" justify="center"
+          color={showPicker ? C.accent : C.textMuted}
+          cursor={isDisabled ? 'not-allowed' : 'pointer'}
+          opacity={isDisabled ? 0.3 : 1}
+          bg={showPicker ? C.accentGlow : 'transparent'}
+          _hover={isDisabled ? {} : { color: C.textSecondary, bg: C.hover }}
+          sx={{ transition: 'all 0.12s' }}
+          title="Emoji"
+        >
+          <LuSmile size={17} />
+        </Flex>
 
         {/* Send button */}
         <MotionBox
