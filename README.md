@@ -61,3 +61,28 @@ Contributions are welcome! Please open an issue first to discuss what you'd like
 ---
 
 > ⚠️ Acuate.chat is intended for legitimate privacy use. Please always comply with your local laws.
+
+---
+
+## Acknowledgements
+
+Acuate.chat is built on the shoulders of these open-source projects:
+
+| Project | License |
+|---|---|
+| [Electron](https://github.com/electron/electron) | MIT |
+| [React](https://github.com/facebook/react) | MIT |
+| [TypeScript](https://github.com/microsoft/TypeScript) | Apache 2.0 |
+| [Chakra UI](https://github.com/chakra-ui/chakra-ui) | MIT |
+| [Framer Motion](https://github.com/framer/motion) | MIT |
+| [React Icons](https://github.com/react-icons/react-icons) | MIT |
+| [TweetNaCl.js](https://github.com/dchest/tweetnacl-js) | Public Domain |
+| [SOCKS](https://github.com/JoshGlazebrook/socks) | MIT |
+| [uuid](https://github.com/uuidjs/uuid) | MIT |
+| [electron-builder](https://github.com/electron-userland/electron-builder) | MIT |
+| [electron-vite](https://github.com/alex8088/electron-vite) | MIT |
+| [@scure/bip39](https://github.com/paulmillr/scure-bip39) | MIT |
+| [Twemoji](https://github.com/twitter/twemoji) | MIT + CC-BY 4.0 |
+| [Tor](https://www.torproject.org/) | BSD-3-Clause |
+
+This product is produced independently from the Tor® anonymity software and carries no guarantee from The Tor Project about quality, suitability or anything else.
