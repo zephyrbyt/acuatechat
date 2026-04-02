@@ -1,7 +1,7 @@
 {
   "name": "acuate-chat",
-  "version": "0.1.0",
-  "description": "Secure P2P encrypted chat over Tor",
+  "version": "1.0.0",
+  "description": "Acuate.chat",
   "author": "acuate.chat",
   "main": "out/main/index.js",
   "scripts": {
@@ -19,6 +19,8 @@
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.0",
     "@scure/bip39": "^2.0.1",
+    "@twemoji/api": "^17.0.2",
+    "electron-updater": "^6.8.3",
     "framer-motion": "^11.18.2",
     "qrcode.react": "^4.2.0",
     "react": "^18.3.1",
@@ -27,11 +29,20 @@
     "socks": "^2.8.3",
     "tweetnacl": "^1.0.3",
     "tweetnacl-util": "^0.15.1",
+    "twemoji-parser": "^14.0.0",
     "uuid": "^11.1.0"
   },
   "build": {
     "appId": "com.acuate.chat",
     "productName": "Acuate.chat",
+    "publish": {
+      "provider": "github",
+      "owner": "zephyrbyt",
+      "repo": "acuatechat"
+    },
+    "win": {
+      "icon": "resources/icon.ico"
+    },
     "extraResources": [
       {
         "from": "resources/",
