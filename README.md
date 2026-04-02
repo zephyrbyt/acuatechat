@@ -1,6 +1,8 @@
 # Acuate.chat Canary
 This version of Acuate.chat is experimental and is used to test features that may become available in the stable version in a future update. [Click here](https://github.com/zephyrbyt/acuatechat) to return to the stable version of Acuate.chat.
 
+You can still communicate with users who are using the stable version of Acuate.chat on the canary version, The other user will not be able to see any of the experimental features.
+
 ![License](https://img.shields.io/github/license/zephyrbyt/acuatechat)
 ![Stars](https://img.shields.io/github/stars/zephyrbyt/acuatechat)
 ![Issues](https://img.shields.io/github/issues/zephyrbyt/acuatechat)
