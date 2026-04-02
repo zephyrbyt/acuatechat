@@ -21,7 +21,7 @@
 
 ### For Users
 
-1. Head to the [Releases](https://github.com/yourusername/acuate.chat/releases) tab
+1. Head to the [Releases](https://github.com/zephyrbyt/acuate.chat/releases) tab
 2. Download the latest `.exe` installer
 3. Run it — that's it. Acuate.chat will be ready to go
 
