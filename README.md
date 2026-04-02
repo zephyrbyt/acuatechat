@@ -36,7 +36,11 @@ You'll need the latest version of NodeJS installed and to get a Tor executable f
 npm i
 ```
 4. Place your Tor executable in the resources folder
-4. Everything is ready — dive in!
+5. Build the source:
+```bash
+npm run build
+```
+6. Everything is ready — dive in!
 
 ---
 
