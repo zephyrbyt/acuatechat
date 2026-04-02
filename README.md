@@ -1,5 +1,5 @@
-# 🔒 Acuate.chat
-> Open-source, E2EE chat routed through the Tor network. No accounts, no metadata, no traces — just private conversations.
+# Acuate.chat Canary
+This version of Acuate.chat is experimental and is used to test features that may become available in the stable version in a future update. [Click here](https://github.com/zephyrbyt/acuatechat) to return to the stable version of Acuate.chat.
 
 ![License](https://img.shields.io/github/license/zephyrbyt/acuatechat)
 ![Stars](https://img.shields.io/github/stars/zephyrbyt/acuatechat)
