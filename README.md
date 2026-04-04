@@ -17,6 +17,17 @@
 
 ---
 
+> ⚠️ **Disclaimer**
+> 
+> Acuate.chat is open-source software provided **"as is"** with no warranties of any kind, express or implied.  
+> The developer makes no guarantees regarding its security, fitness for purpose, or availability.  
+> 
+> You use Acuate.chat entirely at your own risk. The developer shall not be liable for any damages, data loss, legal consequences, or other issues arising from its use.
+> 
+> Acuate.chat does not operate any servers, collect any data, or store any messages or metadata. It is purely client-side P2P software routed through the Tor network.
+> 
+> Always comply with your local laws. Acuate.chat is intended only for legitimate privacy use.
+
 ## Getting Started
 
 ### For Users
@@ -61,10 +72,6 @@ Contributions are welcome! Please open an issue first to discuss what you'd like
 2. Create a feature branch (`git checkout -b feature/your-feature`)
 3. Commit your changes (`git commit -m 'Add your feature'`)
 4. Push and open a Pull Request
-
----
-
-> ⚠️ Acuate.chat is intended for legitimate privacy use. Please always comply with your local laws.
 
 ---
 
