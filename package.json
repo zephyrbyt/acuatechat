@@ -62,7 +62,7 @@
     "@types/uuid": "^10.0.0",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^34.3.0",
-    "electron-builder": "^25.1.8",
+    "electron-builder": "^26.8.1",
     "electron-vite": "^3.1.0",
     "typescript": "^5.7.3",
     "vite": "^6.4.2"
